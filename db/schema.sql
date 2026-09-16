@@ -156,6 +156,16 @@ alter table availability_rules enable row level security;
 alter table bookings enable row level security;
 alter table payments enable row level security;
 
+-- tenants no se filtra por tenant_id (es la tabla raíz), pero igual
+-- lleva RLS activado por consistencia con el resto del schema — sin
+-- esta policy, "fail closed" bloquearía incluso la lectura pública.
+-- Nombre y slug son públicos por naturaleza (son la landing del club);
+-- insert/update/delete quedan sin policy, así que siguen bloqueados
+-- para el rol de la app.
+create policy "public read"
+  on tenants for select
+  using (true);
+
 create policy "scoped to current tenant"
   on resources for all
   using (tenant_id = current_setting('app.tenant_id', true)::uuid);
