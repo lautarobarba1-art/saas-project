@@ -155,6 +155,12 @@ export class PaymentsService {
     const manifest = `id:${dataId.toLowerCase()};request-id:${xRequestId};ts:${ts};`;
     const expected = createHmac('sha256', secret).update(manifest).digest('hex');
 
+    // TEMP DEBUG — nunca loguea el secret, solo valores públicos del
+    // request y el hash derivado. Sacar una vez encontrado el mismatch.
+    this.logger.warn(
+      `webhook debug: dataId="${dataId}" xRequestId="${xRequestId}" ts="${ts}" manifest="${manifest}" expected="${expected}" received="${v1}"`,
+    );
+
     const expectedBuf = Buffer.from(expected, 'hex');
     const actualBuf = Buffer.from(v1, 'hex');
     if (expectedBuf.length !== actualBuf.length) {
