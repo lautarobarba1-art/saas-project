@@ -27,6 +27,23 @@ function mapOrderStatus(order: {
   return 'pending';
 }
 
+// external_reference tiene un límite de 64 caracteres en la Orders API
+// (y no acepta ":") — dos UUIDs con guiones y separador ya son 73. Sacar
+// los guiones deja cada UUID en 32 hex chars, 64 en total sin separador
+// — se reparte de vuelta por posición fija, no hace falta delimitador.
+function encodeReference(tenantId: string, bookingId: string): string {
+  return tenantId.replace(/-/g, '') + bookingId.replace(/-/g, '');
+}
+
+function decodeReference(reference: string): [string, string] | null {
+  if (reference.length !== 64) {
+    return null;
+  }
+  const addDashes = (hex: string) =>
+    `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return [addDashes(reference.slice(0, 32)), addDashes(reference.slice(32))];
+}
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -84,15 +101,13 @@ export class PaymentsService {
           type: 'online',
           processing_mode: 'manual',
           total_amount: amount,
-          external_reference: `${tenantId}:${bookingId}`,
+          external_reference: encodeReference(tenantId, bookingId),
           description: `Seña - ${booking.resource_name}`,
           items: [
             {
               title: `Seña - ${booking.resource_name}`,
               unit_price: amount,
               quantity: 1,
-              unit_measure: 'unit',
-              total_amount: amount,
             },
           ],
           config: { payment_method: {} },
@@ -174,13 +189,12 @@ export class PaymentsService {
     }
     const order = await res.json();
 
-    const [tenantId, bookingId] = String(order.external_reference ?? '').split(
-      ':',
-    );
-    if (!tenantId || !bookingId) {
+    const decoded = decodeReference(String(order.external_reference ?? ''));
+    if (!decoded) {
       this.logger.warn(`Order ${dataId} sin external_reference válido`);
       return;
     }
+    const [tenantId, bookingId] = decoded;
 
     const status = mapOrderStatus(order);
     const providerPaymentId = String(order.id);
