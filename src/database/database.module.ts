@@ -2,8 +2,9 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { TenantContextService } from './tenant-context.service';
+import { PG_POOL } from './pg-pool.token';
 
-export const PG_POOL = 'PG_POOL';
+export { PG_POOL };
 
 // Módulo global: el pool y el helper de tenant-context se inyectan en
 // cualquier módulo sin tener que reimportar esto en cada uno.

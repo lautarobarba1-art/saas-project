@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
-import { PG_POOL } from './database.module';
+import { PG_POOL } from './pg-pool.token';
 
 /**
  * TenantContextService es el ÚNICO lugar del código donde se abre una
