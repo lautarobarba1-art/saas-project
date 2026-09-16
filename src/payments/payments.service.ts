@@ -6,7 +6,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { randomUUID } from 'crypto';
+import {
+  InvalidWebhookSignatureError,
+  WebhookSignatureValidator,
+} from 'mercadopago';
 import { TenantContextService } from '../database/tenant-context.service';
 
 // Mapea el estado de una order de Mercado Pago a los tres que admite
@@ -125,50 +129,6 @@ export class PaymentsService {
     });
   }
 
-  // Formato de firma documentado por Mercado Pago: header
-  // "x-signature: ts=<timestamp>,v1=<hmac>". El manifest a firmar es
-  // "id:<data.id>;request-id:<x-request-id>;ts:<ts>;" — HMAC-SHA256
-  // con el secret que Mercado Pago genera al configurar el webhook
-  // (no lo elegimos nosotros, sale de su dashboard). Mismo esquema para
-  // la Orders API que para la API vieja.
-  private verifySignature(
-    xSignature: string,
-    xRequestId: string,
-    dataId: string,
-  ): boolean {
-    const secret = this.config.get<string>('MERCADOPAGO_WEBHOOK_SECRET');
-    if (!secret) {
-      throw new Error('MERCADOPAGO_WEBHOOK_SECRET no configurado');
-    }
-
-    const parts = Object.fromEntries(
-      xSignature
-        .split(',')
-        .map((p) => p.trim().split('=').map((s) => s.trim())),
-    );
-    const ts = parts['ts'];
-    const v1 = parts['v1'];
-    if (!ts || !v1) {
-      return false;
-    }
-
-    const manifest = `id:${dataId.toLowerCase()};request-id:${xRequestId};ts:${ts};`;
-    const expected = createHmac('sha256', secret).update(manifest).digest('hex');
-
-    // TEMP DEBUG — nunca loguea el secret, solo valores públicos del
-    // request y el hash derivado. Sacar una vez encontrado el mismatch.
-    this.logger.warn(
-      `webhook debug: dataId="${dataId}" xRequestId="${xRequestId}" ts="${ts}" manifest="${manifest}" expected="${expected}" received="${v1}"`,
-    );
-
-    const expectedBuf = Buffer.from(expected, 'hex');
-    const actualBuf = Buffer.from(v1, 'hex');
-    if (expectedBuf.length !== actualBuf.length) {
-      return false;
-    }
-    return timingSafeEqual(expectedBuf, actualBuf);
-  }
-
   async handleWebhook(
     dataId: string,
     xSignature: string | undefined,
@@ -177,17 +137,42 @@ export class PaymentsService {
     if (!dataId || !xSignature || !xRequestId) {
       throw new BadRequestException('Notificación incompleta');
     }
-    if (!this.verifySignature(xSignature, xRequestId, dataId)) {
-      throw new ForbiddenException('Firma inválida');
+
+    const secret = this.config.get<string>('MERCADOPAGO_WEBHOOK_SECRET');
+    if (!secret) {
+      throw new Error('MERCADOPAGO_WEBHOOK_SECRET no configurado');
     }
 
-    // dataId acá es el id de la ORDER (no de un payment suelto — la
-    // Orders API los agrupa). Nunca confiar en el payload del webhook
-    // para el monto/estado: siempre volver a pedirle el recurso a la
-    // API de MP con nuestro access token, que es la fuente de verdad.
+    // Validador del SDK oficial en vez de una implementación manual del
+    // HMAC — la doc pública de MP ya no detalla el manifest exacto y
+    // recomienda usar el SDK; esto evita tener una versión propia que
+    // puede desincronizarse silenciosamente si MP ajusta el formato.
+    try {
+      WebhookSignatureValidator.validate({
+        xSignature,
+        xRequestId,
+        dataId,
+        secret,
+      });
+    } catch (err) {
+      if (err instanceof InvalidWebhookSignatureError) {
+        throw new ForbiddenException('Firma inválida');
+      }
+      throw err;
+    }
+
+    // Este webhook está suscripto a más de un tipo de evento en el
+    // panel de MP (además de "Order", también dispara para
+    // "Órdenes comerciales"/merchant_order). Un merchant_order id no es
+    // un order id — /v1/orders/{id} devuelve 404 para esos, y no es un
+    // error real, solo una notificación que no nos interesa procesar.
     const res = await fetch(`https://api.mercadopago.com/v1/orders/${dataId}`, {
       headers: { Authorization: `Bearer ${this.accessToken}` },
     });
+    if (res.status === 404) {
+      this.logger.log(`${dataId} no es una order (probablemente merchant_order) — ignorado`);
+      return;
+    }
     if (!res.ok) {
       throw new Error(
         `No se pudo obtener la order ${dataId} de Mercado Pago: ${res.status}`,
