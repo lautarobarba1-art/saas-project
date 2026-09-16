@@ -7,16 +7,14 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // Railway (y cualquier PaaS con proxy/load balancer delante) termina
-  // la conexión antes de que llegue a la app — sin esto, req.ip siempre
-  // devuelve la IP del proxy, no la del cliente real, y el rate limiting
-  // por IP terminaría agrupando a todo el mundo en el mismo balde.
-  app.set('trust proxy', 1);
-
-  // TEMP DEBUG — remove after checking req.ip behind Railway's proxy.
-  app.getHttpAdapter().get('/__debug/ip', (req: any, res: any) => {
-    res.json({ ip: req.ip, ips: req.ips, xff: req.headers['x-forwarded-for'] });
-  });
+  // Railway antepone más de un hop en X-Forwarded-For (su propio
+  // balanceador aparece ahí, y esa IP cambia entre requests) — con
+  // trust proxy en un número fijo terminábamos leyendo ese hop variable
+  // en vez del cliente real, y el rate limiting nunca acumulaba nada
+  // (cada request caía en una IP "distinta"). `true` confía en toda la
+  // cadena y toma la entrada más a la izquierda como IP real del
+  // cliente, que es la recomendación estándar para PaaS como este.
+  app.set('trust proxy', true);
 
   // whitelist: descarta cualquier campo del body que no esté en el DTO.
   // forbidNonWhitelisted: si mandan un campo extra, rechaza la request
