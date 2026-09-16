@@ -7,6 +7,7 @@ import { ResourcesModule } from './resources/resources.module';
 import { TenantsModule } from './tenants/tenants.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { AvailabilityRulesModule } from './availability-rules/availability-rules.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AvailabilityRulesModule } from './availability-rules/availability-rules
     TenantsModule,
     BookingsModule,
     AvailabilityRulesModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {}
