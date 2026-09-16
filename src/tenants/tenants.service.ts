@@ -9,6 +9,7 @@ import { Pool } from 'pg';
 import { PG_POOL } from '../database/database.module';
 import { TenantContextService } from '../database/tenant-context.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { AddMembershipDto } from './dto/add-membership.dto';
 
 @Injectable()
 export class TenantsService {
@@ -62,6 +63,53 @@ export class TenantsService {
       );
 
       return { id: tenantId, name: dto.name, slug: dto.slug };
+    });
+  }
+
+  async listMembers(tenantId: string) {
+    return this.tenantContext.withTenant(tenantId, async (client) => {
+      const { rows } = await client.query(
+        `select u.id as user_id, u.email, m.role
+         from memberships m
+         join users u on u.id = m.user_id
+         where m.tenant_id = $1
+         order by m.created_at`,
+        [tenantId],
+      );
+      return rows;
+    });
+  }
+
+  // Busca al usuario por email en el pool directo (users no tiene RLS
+  // por tenant, es la misma excepción que usa auth.service) y recién
+  // ahí entra a withTenant() para el insert en memberships.
+  async addMember(tenantId: string, dto: AddMembershipDto) {
+    const { rows: userRows } = await this.pool.query(
+      'select id from users where email = $1',
+      [dto.email],
+    );
+    const user = userRows[0];
+    if (!user) {
+      throw new NotFoundException(
+        'No hay ningún usuario registrado con ese email',
+      );
+    }
+
+    return this.tenantContext.withTenant(tenantId, async (client) => {
+      try {
+        const { rows } = await client.query(
+          `insert into memberships (tenant_id, user_id, role)
+           values ($1, $2, 'staff')
+           returning id, role`,
+          [tenantId, user.id],
+        );
+        return { id: rows[0].id, email: dto.email, role: rows[0].role };
+      } catch (err: any) {
+        if (err.code === '23505') {
+          throw new ConflictException('Ese usuario ya pertenece al club');
+        }
+        throw err;
+      }
     });
   }
 }
