@@ -71,14 +71,28 @@ Deployado en Railway (proyecto `carefree-heart`, servicio `saas-project`
   `pending_payment` con hold de 10 min, cron que expira holds vencidos
   cada minuto (itera tenants y usa `withTenant` por cada uno — no hay
   rol con bypass de RLS para hacerlo en una sola query cross-tenant).
-- `payments`: integración con Mercado Pago (`POST .../payment-preference`
-  crea el checkout, `POST /payments/webhook/mercadopago` recibe la
-  notificación, verifica la firma `x-signature` con HMAC-SHA256 antes
-  de confiar en nada, y solo ahí vuelve a pedirle el pago a la API de
-  MP para actualizar `payments`/`bookings`). Escrito, compila y el
-  server lo mapea — **todavía no probado con credenciales reales de
-  Mercado Pago** (falta `MERCADOPAGO_ACCESS_TOKEN`,
-  `MERCADOPAGO_WEBHOOK_URL` y `MERCADOPAGO_WEBHOOK_SECRET` en Railway).
+- `payments`: integración con Mercado Pago usando la **Orders API**
+  (`POST /v1/orders`, no la vieja `/checkout/preferences` — el panel de
+  MP empuja a integraciones nuevas hacia esta). `POST .../payment-preference`
+  crea la order y devuelve `checkout_url`; `POST /payments/webhook/mercadopago`
+  recibe la notificación, valida `x-signature` con
+  `WebhookSignatureValidator` del **SDK oficial** (`mercadopago` en
+  npm) — no reimplementar el HMAC a mano, la doc pública de MP ya no
+  publica el formato exacto del manifest y el SDK es la fuente de
+  verdad — y solo ahí vuelve a pedirle la order a la API de MP
+  (`GET /v1/orders/:id`) para actualizar `payments`/`bookings`.
+  `external_reference` va como `tenantId+bookingId` (32 hex chars cada
+  uno, sin separador — el límite de MP es 64 caracteres, con `:` como
+  separador se pasa).
+  El pago en sí se probó una vez con una tarjeta de prueba y Mercado
+  Pago lo acreditó — **la confirmación automática vía webhook todavía
+  no se re-probó** después del último fix de firma. La app en el panel
+  de MP tiene que tener tildado el evento **"Order (Mercado Pago)"**
+  (no alcanza con "Órdenes comerciales"/merchant_order, que es un
+  recurso distinto y se ignora a propósito si llega). Variables en
+  Railway: `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`
+  (`MERCADOPAGO_WEBHOOK_URL` es solo documentación, la Orders API no la
+  lee en runtime — el webhook se registra una vez en el panel de MP).
 - Rate limiting propio (sin `@nestjs/throttler`, que todavía no declara
   soporte de peer-dependency para Nest 12) en `/auth/login` (10/min),
   `/auth/register` (5/min) y el endpoint público de reservas
@@ -98,11 +112,21 @@ Deployado en Railway (proyecto `carefree-heart`, servicio `saas-project`
   seguridad de una dependencia transitiva de `bcrypt`) — no quitarlo
   sin correr `npm audit` de nuevo.
 
+## Roles: owner vs staff
+`RolesGuard` + `@Roles('owner')` (`src/common/roles.guard.ts`), mismo
+patrón de provider no registrado explícitamente que `MembershipGuard`
+— corre después de él porque lee `req.membership.role`. Sin
+`@Roles()` en la ruta, cualquier miembro (owner o staff) pasa, que es
+el comportamiento por default de siempre.
+`GET/POST /tenants/:tenantId/memberships` (`owner` para el POST) —
+antes de esto no había NINGUNA forma de sumar un `staff` a un club, la
+única membership que existía era la del owner creada junto con el
+tenant. `resources`/`availability-rules` siguen abiertos a ambos roles
+a propósito — es el trabajo del día a día del staff.
+
 ## Lo que falta (a propósito, no un olvido)
-- Probar la integración de Mercado Pago de punta a punta con
-  credenciales reales (sandbox o cuenta de prueba).
-- Diferenciación real de roles `owner` vs `staff` — hoy
-  `MembershipGuard` solo valida pertenencia al tenant, no el rol.
+- Re-probar el webhook de Mercado Pago de punta a punta después del
+  fix de firma (ver sección de `payments` arriba).
 - No hay frontend. Todo lo de arriba es solo API — probarlo requiere
   Postman/curl/Insomnia, no un navegador.
 
