@@ -148,6 +148,23 @@ create unique index payments_provider_payment_id_uidx
 -- que corre migraciones o tareas administrativas con permisos amplios;
 -- usá un rol de base de datos separado y con menos privilegios para
 -- el tráfico normal de la app.
+--
+-- Esto no es opcional: Postgres exime al DUEÑO de una tabla de sus
+-- propias políticas RLS a menos que se use FORCE ROW LEVEL SECURITY.
+-- Si el DATABASE_URL de la app usa el mismo rol que corrió este
+-- schema (ej. el "postgres" que da Railway por default), todas las
+-- políticas de abajo quedan sin efecto para la app — no hay error,
+-- simplemente no aíslan nada. El rol de la app tiene que ser uno
+-- nuevo, sin ownership de ninguna tabla:
+--
+--   create role app_user with login password '<generar uno fuerte>';
+--   grant usage on schema public to app_user;
+--   grant select, insert, update, delete
+--     on all tables in schema public to app_user;
+--   alter default privileges in schema public
+--     grant select, insert, update, delete on tables to app_user;
+--
+-- Y el DATABASE_URL de la app apunta a app_user, no al rol admin.
 -- =====================================================================
 alter table tenants enable row level security;
 alter table memberships enable row level security;
@@ -165,6 +182,16 @@ alter table payments enable row level security;
 create policy "public read"
   on tenants for select
   using (true);
+
+-- Alta de club: cualquier usuario autenticado puede crear un tenant
+-- (no hay todavía un tenant_id que validar en ese momento — es el
+-- mismo caso borde que la lectura pública). La app exige JwtAuthGuard
+-- antes de llegar acá; RLS no puede saber quién está logueado, así que
+-- la autorización real de "quién puede crear un club" vive en la capa
+-- de aplicación, no en esta policy.
+create policy "authenticated create"
+  on tenants for insert
+  with check (true);
 
 create policy "scoped to current tenant"
   on resources for all
