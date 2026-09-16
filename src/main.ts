@@ -13,6 +13,11 @@ async function bootstrap() {
   // por IP terminaría agrupando a todo el mundo en el mismo balde.
   app.set('trust proxy', 1);
 
+  // TEMP DEBUG — remove after checking req.ip behind Railway's proxy.
+  app.getHttpAdapter().get('/__debug/ip', (req: any, res: any) => {
+    res.json({ ip: req.ip, ips: req.ips, xff: req.headers['x-forwarded-for'] });
+  });
+
   // whitelist: descarta cualquier campo del body que no esté en el DTO.
   // forbidNonWhitelisted: si mandan un campo extra, rechaza la request
   // en vez de ignorarlo en silencio (evita asunciones incorrectas sobre
