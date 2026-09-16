@@ -6,16 +6,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { TenantContextService } from '../database/tenant-context.service';
 
-// Mapea los estados de pago de Mercado Pago a los tres que admite
-// payments.status en el schema. MP tiene más estados (in_process,
-// refunded, charged_back, ...) que no necesitamos distinguir todavía
-// — cualquiera que no sea 'approved' se trata como no confirmado.
-function mapProviderStatus(mpStatus: string): 'pending' | 'approved' | 'rejected' {
-  if (mpStatus === 'approved') return 'approved';
-  if (mpStatus === 'rejected' || mpStatus === 'cancelled') return 'rejected';
+// Mapea el estado de una order de Mercado Pago a los tres que admite
+// payments.status en el schema. "processed" + "accredited" es la única
+// combinación que significa "cobrado de verdad" — cualquier otra cosa
+// (created, in_process, processed con otro status_detail, ...) se
+// trata como no confirmado.
+function mapOrderStatus(order: {
+  status?: string;
+  status_detail?: string;
+}): 'pending' | 'approved' | 'rejected' {
+  if (order.status === 'processed' && order.status_detail === 'accredited') {
+    return 'approved';
+  }
+  if (order.status === 'processed') {
+    return 'rejected';
+  }
   return 'pending';
 }
 
@@ -37,9 +45,10 @@ export class PaymentsService {
   }
 
   // Arma el checkout de Mercado Pago para la seña de una reserva ya
-  // creada (en pending_payment). El external_reference lleva
-  // "tenantId:bookingId" porque el webhook solo nos da un payment id
-  // de MP — sin el tenantId codificado ahí no hay forma de abrir
+  // creada (en pending_payment), usando la Orders API (POST /v1/orders
+  // — reemplaza a la vieja /checkout/preferences). El external_reference
+  // lleva "tenantId:bookingId" porque el webhook solo nos da el id de
+  // la order — sin el tenantId codificado ahí no hay forma de abrir
   // withTenant() antes de tocar bookings/payments (que tienen RLS por
   // tenant), y no queremos resolver eso con un rol que bypasee RLS.
   async createPreference(tenantId: string, bookingId: string) {
@@ -59,41 +68,45 @@ export class PaymentsService {
         throw new BadRequestException('Esta reserva no está esperando pago');
       }
 
-      const notificationUrl = this.config.get<string>(
-        'MERCADOPAGO_WEBHOOK_URL',
-      );
+      const amount = Number(booking.sena_amount).toFixed(2);
 
-      const res = await fetch(
-        'https://api.mercadopago.com/checkout/preferences',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.accessToken}`,
-          },
-          body: JSON.stringify({
-            items: [
-              {
-                title: `Seña - ${booking.resource_name}`,
-                quantity: 1,
-                currency_id: 'ARS',
-                unit_price: booking.sena_amount,
-              },
-            ],
-            external_reference: `${tenantId}:${bookingId}`,
-            notification_url: notificationUrl,
-          }),
+      const res = await fetch('https://api.mercadopago.com/v1/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.accessToken}`,
+          // Evita crear una order duplicada si el cliente reintenta el
+          // request (ej. doble click, retry de red) — MP dedupea por
+          // esta key en vez de por el contenido del body.
+          'X-Idempotency-Key': randomUUID(),
         },
-      );
+        body: JSON.stringify({
+          type: 'online',
+          processing_mode: 'manual',
+          total_amount: amount,
+          external_reference: `${tenantId}:${bookingId}`,
+          description: `Seña - ${booking.resource_name}`,
+          items: [
+            {
+              title: `Seña - ${booking.resource_name}`,
+              unit_price: amount,
+              quantity: 1,
+              unit_measure: 'unit',
+              total_amount: amount,
+            },
+          ],
+          config: { payment_method: {} },
+        }),
+      });
 
       if (!res.ok) {
         const body = await res.text();
-        this.logger.error(`Mercado Pago rechazó la preferencia: ${res.status} ${body}`);
+        this.logger.error(`Mercado Pago rechazó la order: ${res.status} ${body}`);
         throw new Error('No se pudo iniciar el pago con Mercado Pago');
       }
 
-      const preference = await res.json();
-      return { checkoutUrl: preference.init_point };
+      const order = await res.json();
+      return { checkoutUrl: order.checkout_url };
     });
   }
 
@@ -101,7 +114,8 @@ export class PaymentsService {
   // "x-signature: ts=<timestamp>,v1=<hmac>". El manifest a firmar es
   // "id:<data.id>;request-id:<x-request-id>;ts:<ts>;" — HMAC-SHA256
   // con el secret que Mercado Pago genera al configurar el webhook
-  // (no lo elegimos nosotros, sale de su dashboard).
+  // (no lo elegimos nosotros, sale de su dashboard). Mismo esquema para
+  // la Orders API que para la API vieja.
   private verifySignature(
     xSignature: string,
     xRequestId: string,
@@ -146,27 +160,32 @@ export class PaymentsService {
       throw new ForbiddenException('Firma inválida');
     }
 
-    // Nunca confiar en el payload del webhook para el monto/estado —
-    // siempre volver a pedirle el recurso a la API de MP con nuestro
-    // access token, que es la fuente de verdad.
-    const res = await fetch(
-      `https://api.mercadopago.com/v1/payments/${dataId}`,
-      { headers: { Authorization: `Bearer ${this.accessToken}` } },
-    );
+    // dataId acá es el id de la ORDER (no de un payment suelto — la
+    // Orders API los agrupa). Nunca confiar en el payload del webhook
+    // para el monto/estado: siempre volver a pedirle el recurso a la
+    // API de MP con nuestro access token, que es la fuente de verdad.
+    const res = await fetch(`https://api.mercadopago.com/v1/orders/${dataId}`, {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
     if (!res.ok) {
       throw new Error(
-        `No se pudo obtener el pago ${dataId} de Mercado Pago: ${res.status}`,
+        `No se pudo obtener la order ${dataId} de Mercado Pago: ${res.status}`,
       );
     }
-    const payment = await res.json();
+    const order = await res.json();
 
-    const [tenantId, bookingId] = String(
-      payment.external_reference ?? '',
-    ).split(':');
+    const [tenantId, bookingId] = String(order.external_reference ?? '').split(
+      ':',
+    );
     if (!tenantId || !bookingId) {
-      this.logger.warn(`Pago ${dataId} sin external_reference válido`);
+      this.logger.warn(`Order ${dataId} sin external_reference válido`);
       return;
     }
+
+    const status = mapOrderStatus(order);
+    const providerPaymentId = String(order.id);
+    const payment = order.transactions?.payments?.[0];
+    const amount = Number(payment?.amount ?? order.total_paid_amount ?? 0);
 
     await this.tenantContext.withTenant(tenantId, async (client) => {
       const { rows } = await client.query(
@@ -175,7 +194,7 @@ export class PaymentsService {
       );
       const booking = rows[0];
       if (!booking) {
-        this.logger.warn(`Pago ${dataId} referencia una reserva inexistente`);
+        this.logger.warn(`Order ${dataId} referencia una reserva inexistente`);
         return;
       }
 
@@ -185,10 +204,10 @@ export class PaymentsService {
            values ($1, 'mercadopago', $2, $3, $4, $5)`,
           [
             bookingId,
-            String(payment.id),
-            Math.round(payment.transaction_amount ?? 0),
-            mapProviderStatus(payment.status),
-            JSON.stringify(payment),
+            providerPaymentId,
+            Math.round(amount),
+            status,
+            JSON.stringify(order),
           ],
         );
       } catch (err: any) {
@@ -201,7 +220,7 @@ export class PaymentsService {
         throw err;
       }
 
-      if (payment.status === 'approved' && booking.status === 'pending_payment') {
+      if (status === 'approved' && booking.status === 'pending_payment') {
         await client.query(
           `update bookings set status = 'confirmed' where id = $1`,
           [bookingId],
