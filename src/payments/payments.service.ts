@@ -232,11 +232,36 @@ export class PaymentsService {
         throw err;
       }
 
-      if (status === 'approved' && booking.status === 'pending_payment') {
-        await client.query(
-          `update bookings set status = 'confirmed' where id = $1`,
-          [bookingId],
-        );
+      if (
+        status === 'approved' &&
+        (booking.status === 'pending_payment' || booking.status === 'expired')
+      ) {
+        // El caso normal es confirmar un pending_payment. El caso
+        // "expired" es un pago aprobado que llegó después de que el
+        // cron ya liberó el hold — no debería pasar en uso normal (MP
+        // notifica en segundos), pero si pasa, el horario pudo haber
+        // quedado libre para que otra persona lo reserve mientras
+        // tanto. Intentar confirmar de todas formas: si nadie más lo
+        // tomó, el EXCLUDE constraint deja pasar el update tranquilo.
+        // Si alguien sí lo tomó, el mismo 23P01 que ya se maneja en
+        // bookings.service.ts salta acá — y acá SÍ es una situación
+        // real que necesita a alguien mirando (plata cobrada, cancha
+        // ocupada por otro), no un 409 más del montón.
+        try {
+          await client.query(
+            `update bookings set status = 'confirmed' where id = $1`,
+            [bookingId],
+          );
+        } catch (err: any) {
+          if (err.code === '23P01') {
+            this.logger.error(
+              `CONFLICTO: pago aprobado (${providerPaymentId}, $${amount}) para booking ${bookingId} ` +
+                `que expiró y ya fue ocupado por otra reserva — requiere revisión manual (posible reembolso).`,
+            );
+          } else {
+            throw err;
+          }
+        }
       }
     });
   }
