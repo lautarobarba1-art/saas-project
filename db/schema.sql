@@ -166,6 +166,29 @@ create unique index payments_provider_payment_id_uidx
 --
 -- Y el DATABASE_URL de la app apunta a app_user, no al rol admin.
 -- =====================================================================
+
+-- Gotcha real de Postgres con conexiones recicladas (pool): una vez que
+-- una variable de sesión custom como app.tenant_id se SETEÓ (aunque sea
+-- con SET LOCAL, transaccional) una vez en la vida de la conexión,
+-- current_setting(..., true) deja de devolver NULL cuando "no está
+-- seteada" — devuelve '' (string vacío). Un ::uuid directo sobre eso
+-- explota con "invalid input syntax for type uuid". Pasa completamente
+-- inadvertido mientras todo el código pase por withTenant() (que
+-- siempre pisa su propio valor antes de que se evalúe cualquier
+-- policy) — pero en cuanto aparece un patrón que NO setea
+-- app.tenant_id (como withUser(), para operaciones cross-tenant) en
+-- una conexión reciclada que sí lo tuvo seteado antes, rompe. nullif
+-- convierte ese '' a NULL antes del cast, así current_setting sigue
+-- comportándose como "no seteada" sin importar el historial de la
+-- conexión.
+create or replace function app_tenant_id() returns uuid
+  language sql stable
+  as $$ select nullif(current_setting('app.tenant_id', true), '')::uuid $$;
+
+create or replace function app_user_id() returns uuid
+  language sql stable
+  as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
+
 alter table tenants enable row level security;
 alter table memberships enable row level security;
 alter table resources enable row level security;
@@ -195,7 +218,7 @@ create policy "authenticated create"
 
 create policy "scoped to current tenant"
   on resources for all
-  using (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  using (tenant_id = app_tenant_id());
 
 -- Lectura pública de canchas activas, sin tenant context: la página
 -- pública de un club (resuelta por slug) necesita listar sus canchas
@@ -209,11 +232,11 @@ create policy "public read active"
 
 create policy "scoped to current tenant"
   on bookings for all
-  using (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  using (tenant_id = app_tenant_id());
 
 create policy "scoped to current tenant"
   on memberships for all
-  using (tenant_id = current_setting('app.tenant_id', true)::uuid);
+  using (tenant_id = app_tenant_id());
 
 -- Un usuario logueado necesita poder ver sus propias memberships
 -- across tenants (ej. "a qué clubes pertenezco") sin conocer de
@@ -223,7 +246,7 @@ create policy "scoped to current tenant"
 -- policy de arriba.
 create policy "own memberships"
   on memberships for select
-  using (user_id = current_setting('app.user_id', true)::uuid);
+  using (user_id = app_user_id());
 
 create policy "scoped to current tenant"
   on availability_rules for all
@@ -231,7 +254,7 @@ create policy "scoped to current tenant"
     exists (
       select 1 from resources r
       where r.id = availability_rules.resource_id
-        and r.tenant_id = current_setting('app.tenant_id', true)::uuid
+        and r.tenant_id = app_tenant_id()
     )
   );
 
@@ -241,7 +264,7 @@ create policy "scoped to current tenant"
     exists (
       select 1 from bookings b
       where b.id = payments.booking_id
-        and b.tenant_id = current_setting('app.tenant_id', true)::uuid
+        and b.tenant_id = app_tenant_id()
     )
   );
 
