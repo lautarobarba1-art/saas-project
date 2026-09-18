@@ -7,7 +7,7 @@ import {
 import { TenantContextService } from '../database/tenant-context.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 
-interface Interval {
+export interface Interval {
   start: Date;
   end: Date;
 }
@@ -16,7 +16,9 @@ interface Interval {
 // (una ventana de availability_rules), devolviendo los huecos que quedan
 // libres. Puramente aritmético, no toca la base — la disponibilidad real
 // la garantiza el EXCLUDE constraint de bookings al momento del insert.
-function subtractBusy(base: Interval, busy: Interval[]): Interval[] {
+// Exportada (no solo de uso interno) para poder testearla sin DB — es
+// la lógica más propensa a bugs sutiles de todo el módulo.
+export function subtractBusy(base: Interval, busy: Interval[]): Interval[] {
   let free = [base];
   for (const b of busy) {
     free = free.flatMap((f) => {

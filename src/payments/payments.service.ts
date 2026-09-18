@@ -19,7 +19,7 @@ import { WhatsAppService } from '../notifications/whatsapp.service';
 // combinación que significa "cobrado de verdad" — cualquier otra cosa
 // (created, in_process, processed con otro status_detail, ...) se
 // trata como no confirmado.
-function mapOrderStatus(order: {
+export function mapOrderStatus(order: {
   status?: string;
   status_detail?: string;
 }): 'pending' | 'approved' | 'rejected' {
@@ -36,11 +36,11 @@ function mapOrderStatus(order: {
 // (y no acepta ":") — dos UUIDs con guiones y separador ya son 73. Sacar
 // los guiones deja cada UUID en 32 hex chars, 64 en total sin separador
 // — se reparte de vuelta por posición fija, no hace falta delimitador.
-function encodeReference(tenantId: string, bookingId: string): string {
+export function encodeReference(tenantId: string, bookingId: string): string {
   return tenantId.replace(/-/g, '') + bookingId.replace(/-/g, '');
 }
 
-function decodeReference(reference: string): [string, string] | null {
+export function decodeReference(reference: string): [string, string] | null {
   if (reference.length !== 64) {
     return null;
   }
@@ -52,7 +52,7 @@ function decodeReference(reference: string): [string, string] | null {
 // Mismo criterio de timezone fijo -03:00 que el resto del proyecto
 // (ver BookingsService): Argentina no observa horario de verano desde
 // 2009.
-function formatWhenLabel(startAt: Date): string {
+export function formatWhenLabel(startAt: Date): string {
   const dayLabel = new Intl.DateTimeFormat('es-AR', {
     weekday: 'long',
     day: '2-digit',
