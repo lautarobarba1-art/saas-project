@@ -16,6 +16,14 @@ async function bootstrap() {
   // cliente, que es la recomendación estándar para PaaS como este.
   app.set('trust proxy', true);
 
+  // El frontend (Next.js) corre en otro dominio y llama a los
+  // endpoints públicos directo desde el navegador. Abierto a cualquier
+  // origen a propósito: la auth acá es Bearer token en el header, no
+  // cookies de sesión, así que un CORS permisivo no habilita CSRF ni
+  // comparte credenciales entre sitios — solo permite que la respuesta
+  // sea legible desde otro origen.
+  app.enableCors();
+
   // whitelist: descarta cualquier campo del body que no esté en el DTO.
   // forbidNonWhitelisted: si mandan un campo extra, rechaza la request
   // en vez de ignorarlo en silencio (evita asunciones incorrectas sobre
