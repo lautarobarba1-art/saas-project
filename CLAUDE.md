@@ -103,13 +103,14 @@ Deployado en Railway (proyecto `carefree-heart`, servicio `saas-project`
   `PaymentsService.handleWebhook` loguea el motivo exacto del rechazo
   (`InvalidWebhookSignatureError.reason`) para diagnosticar esto rápido.
 
-  **Gap conocido, no arreglado todavía**: si el webhook tarda en llegar
-  más que el hold de 10 minutos de la reserva (no debería pasar en uso
-  normal — MP notifica en segundos), el pago se registra en `payments`
-  como `approved` pero la reserva queda `expired` en vez de pasar a
-  `confirmed`, porque el código solo confirma si el estado todavía era
-  `pending_payment`. No maneja el caso de "revivir" una reserva vencida
-  con un pago aprobado tardío.
+  **Pago tardío sobre una reserva ya expirada**: si el webhook llega
+  después de que el cron ya liberó el hold de 10 minutos (no debería
+  pasar en uso normal — MP notifica en segundos), el código igual
+  intenta confirmar la reserva `expired`. Si nadie ocupó ese horario
+  mientras tanto, pasa a `confirmed` igual que siempre. Si alguien sí
+  lo tomó, el `EXCLUDE` constraint lo bloquea (23P01) y queda logueado
+  como error para revisión manual — plata cobrada por un horario que
+  ahora es de otra reserva no es algo para resolver solo en el código.
 - Rate limiting propio (sin `@nestjs/throttler`, que todavía no declara
   soporte de peer-dependency para Nest 12) en `/auth/login` (10/min),
   `/auth/register` (5/min) y el endpoint público de reservas
@@ -142,8 +143,6 @@ tenant. `resources`/`availability-rules` siguen abiertos a ambos roles
 a propósito — es el trabajo del día a día del staff.
 
 ## Lo que falta (a propósito, no un olvido)
-- Manejar un pago aprobado que llega después de que la reserva ya
-  expiró (ver "Gap conocido" en la sección de `payments` arriba).
 - No hay frontend. Todo lo de arriba es solo API — probarlo requiere
   Postman/curl/Insomnia, no un navegador.
 
