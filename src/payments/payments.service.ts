@@ -12,6 +12,7 @@ import {
   WebhookSignatureValidator,
 } from 'mercadopago';
 import { TenantContextService } from '../database/tenant-context.service';
+import { WhatsAppService } from '../notifications/whatsapp.service';
 
 // Mapea el estado de una order de Mercado Pago a los tres que admite
 // payments.status en el schema. "processed" + "accredited" es la única
@@ -48,6 +49,25 @@ function decodeReference(reference: string): [string, string] | null {
   return [addDashes(reference.slice(0, 32)), addDashes(reference.slice(32))];
 }
 
+// Mismo criterio de timezone fijo -03:00 que el resto del proyecto
+// (ver BookingsService): Argentina no observa horario de verano desde
+// 2009.
+function formatWhenLabel(startAt: Date): string {
+  const dayLabel = new Intl.DateTimeFormat('es-AR', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(startAt);
+  const timeLabel = new Intl.DateTimeFormat('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(startAt);
+  return `${dayLabel.charAt(0).toUpperCase()}${dayLabel.slice(1)} ${timeLabel}`;
+}
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -55,6 +75,7 @@ export class PaymentsService {
   constructor(
     private readonly config: ConfigService,
     private readonly tenantContext: TenantContextService,
+    private readonly whatsapp: WhatsAppService,
   ) {}
 
   private get accessToken(): string {
@@ -201,7 +222,12 @@ export class PaymentsService {
 
     await this.tenantContext.withTenant(tenantId, async (client) => {
       const { rows } = await client.query(
-        `select id, status from bookings where id = $1 and tenant_id = $2`,
+        `select b.id, b.status, b.client_name, b.client_phone, b.start_at,
+                r.name as resource_name, t.name as tenant_name
+         from bookings b
+         join resources r on r.id = b.resource_id
+         join tenants t on t.id = b.tenant_id
+         where b.id = $1 and b.tenant_id = $2`,
         [bookingId, tenantId],
       );
       const booking = rows[0];
@@ -252,6 +278,17 @@ export class PaymentsService {
             `update bookings set status = 'confirmed' where id = $1`,
             [bookingId],
           );
+          // Fire-and-forget a propósito: si WhatsApp falla o tarda, no
+          // tiene que demorar ni tirar abajo la confirmación del
+          // webhook — el pago y la reserva ya quedaron bien, la
+          // notificación es un plus, no la fuente de verdad.
+          void this.whatsapp.sendBookingConfirmation({
+            phone: booking.client_phone,
+            clientName: booking.client_name,
+            tenantName: booking.tenant_name,
+            resourceName: booking.resource_name,
+            whenLabel: formatWhenLabel(booking.start_at),
+          });
         } catch (err: any) {
           if (err.code === '23P01') {
             this.logger.error(
