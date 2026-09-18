@@ -205,6 +205,27 @@ los tests de RLS pasan igual sin probar nada real). CI
 (`.github/workflows/ci.yml`) levanta un Postgres descartable por job y
 arma ambos roles desde cero en cada corrida, no depende de Railway.
 
+Cobertura actual (33 tests, 4 archivos):
+- `test/rls.spec.ts` — aislamiento multi-tenant y el EXCLUDE constraint
+  de bookings (contra Postgres real, ver arriba).
+- `test/bookings-availability.spec.ts`, `test/payments-logic.spec.ts`
+  — funciones puras sin DB (`subtractBusy`, `mapOrderStatus`,
+  `encodeReference`/`decodeReference`, `formatWhenLabel` — exportadas
+  desde sus services solo para poder testearlas sueltas).
+- `test/http.e2e.spec.ts` — capa HTTP completa vía
+  `Test.createTestingModule({imports: [AppModule]})` + `supertest`,
+  el `AppModule` real (no uno recortado), así que guards no
+  registrados explícitamente como provider (`MembershipGuard`,
+  `RolesGuard`, `RateLimitGuard`) se resuelven exactamente igual que en
+  producción. Cubre auth, `JwtAuthGuard`, `MembershipGuard`,
+  `RolesGuard`, y que el rate limit de `/auth/login` corte de verdad.
+
+Lo que todavía no tiene test: el webhook de Mercado Pago de punta a
+punta (createPreference/handleWebhook con la Orders API real — hoy
+solo están testeadas las funciones puras que usan), disponibilidad de
+`availability-rules` vía HTTP, y WhatsApp (no tiene ningún test, ni
+siquiera del payload que arma).
+
 ## Convenciones
 - TypeScript estricto, sin `any` sin justificar.
 - Cada módulo: `*.module.ts`, `*.service.ts`, `*.controller.ts`, DTOs
