@@ -142,9 +142,45 @@ antes de esto no había NINGUNA forma de sumar un `staff` a un club, la
 tenant. `resources`/`availability-rules` siguen abiertos a ambos roles
 a propósito — es el trabajo del día a día del staff.
 
+## Notificaciones por WhatsApp
+`src/notifications/whatsapp.service.ts` — WhatsApp Cloud API de Meta
+directo (sin Twilio/BSP). Se dispara desde `PaymentsService` apenas un
+pago aprobado confirma una reserva, `fire-and-forget` (nunca se espera
+ni se deja que rompa el webhook si falla).
+
+- El mensaje tiene que salir de un **template pre-aprobado por Meta**
+  (`canchaya_reserva_confirmada`, `es_AR`, categoría UTILITY) — no se
+  puede mandar texto libre como primer mensaje del negocio. Si hay que
+  cambiar el contenido, hay que crear un template nuevo (con otro
+  nombre) y esperar aprobación de nuevo, no se edita uno ya aprobado.
+- **El WhatsApp Business Account (WABA) está compartido con otro
+  negocio existente del usuario (Menesteres)** — mismo número, misma
+  cuenta. Ya había un template llamado `reserva_confirmada` de ese otro
+  negocio (con variables de "Clase"/"Cupos" que no aplican acá), por
+  eso el nombre de este es `canchaya_reserva_confirmada`. Si algún día
+  hace falta separar esto en un número de WhatsApp Business propio de
+  Canchaya, es una migración de infraestructura en Meta, no un cambio
+  de código.
+- Variables en Railway: `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`
+  (hoy es el token temporal de 24hs que da el panel de Meta para
+  pruebas — **antes de depender de esto en producción real hay que
+  reemplazarlo por uno permanente**, generado desde un System User en
+  Business Settings, o los envíos van a empezar a fallar solos cuando
+  expire), `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+- El teléfono se normaliza sacando todo lo que no sea dígito
+  (`booking.client_phone.replace(/[^0-9]/g, '')`) y se manda tal cual a
+  la API — no se intenta adivinar ni insertar el prefijo `54`/`9` de
+  Argentina. Si el cliente cargó el teléfono en un formato raro, el
+  envío falla silenciosamente (queda logueado, no rompe nada), no hay
+  reintento ni aviso al club todavía.
+
 ## Lo que falta (a propósito, no un olvido)
-- No hay frontend. Todo lo de arriba es solo API — probarlo requiere
-  Postman/curl/Insomnia, no un navegador.
+- Confirmar que el template de WhatsApp fue aprobado por Meta (estaba
+  `PENDING` la última vez que se chequeó) y probar un envío real de
+  punta a punta.
+- Frontend público (`canchaya-web`, repo aparte) ya cubre reservas y
+  panel de administración — lo que falta ahí es propio de ese repo, no
+  de esta API.
 
 ## Convenciones
 - TypeScript estricto, sin `any` sin justificar.
