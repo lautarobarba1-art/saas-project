@@ -182,10 +182,34 @@ ni se deja que rompa el webhook si falla).
   panel de administración — lo que falta ahí es propio de ese repo, no
   de esta API.
 
+## Tests
+`vitest`, no `jest` — se probó jest primero y no arrancó: `@nestjs/common`
+en esta versión es un paquete 100% ESM (`"type": "module"`, sin build
+CJS), y el motor de módulos propio de Jest no sabe cargar eso aunque
+Node 25 sí soporte `require()` nativo de ESM (por eso la app compilada
+corre bien con `node dist/main.js` pero jest tiraba "Must use import to
+load ES Module"). Vitest lo resuelve sin config especial.
+
+`test/rls.spec.ts` son tests de integración contra una base de test
+real — no mocks de `pg`, a propósito: los tres bugs de seguridad reales
+de este proyecto (guard con pool directo, RLS sin forzar, string vacío
+en conexión reciclada) solo aparecían con Postgres de verdad, un mock
+los hubiera dejado pasar igual. `test/helpers.ts` arma fixtures con un
+pool "admin" (rol `postgres`, bypassea RLS) y los tests ejercitan un
+pool "app" (rol `app_user`, el mismo que corre en producción).
+
+Variables necesarias para correr `npm test` local: `TEST_ADMIN_DATABASE_URL`
+(rol con permisos para crear el schema) y `TEST_DATABASE_URL` (rol
+`app_user`, sin ownership de las tablas — si se usa el rol admin acá,
+los tests de RLS pasan igual sin probar nada real). CI
+(`.github/workflows/ci.yml`) levanta un Postgres descartable por job y
+arma ambos roles desde cero en cada corrida, no depende de Railway.
+
 ## Convenciones
 - TypeScript estricto, sin `any` sin justificar.
 - Cada módulo: `*.module.ts`, `*.service.ts`, `*.controller.ts`, DTOs
   en `dto/` con validación de `class-validator`.
 - Queries SQL parametrizadas siempre — nunca interpolar strings en SQL,
   ni siquiera para valores que "parecen seguros" como un UUID.
-- `npm run typecheck` antes de dar cualquier cambio por terminado.
+- `npm run typecheck` y `npm test` antes de dar cualquier cambio por
+  terminado.
