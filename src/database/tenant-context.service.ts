@@ -49,4 +49,31 @@ export class TenantContextService {
       client.release();
     }
   }
+
+  // Mismo patrón que withTenant, pero para el caso borde de "un usuario
+  // logueado quiere ver sus propios datos across tenants" (ej. listar
+  // los clubes a los que pertenece) — no hay un tenant_id todavía para
+  // scopear por ahí. Setea app.user_id en vez de app.tenant_id; la
+  // policy correspondiente en memberships compara contra esa variable,
+  // nunca contra un id que venga directo del código sin pasar por acá.
+  async withUser<T>(
+    userId: string,
+    callback: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.user_id', $1, true)", [
+        userId,
+      ]);
+      const result = await callback(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }

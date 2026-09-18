@@ -77,6 +77,24 @@ export class TenantsService {
     });
   }
 
+  // withUser(), no withTenant(): esto es exactamente el caso para el
+  // que existe — el usuario todavía no sabe a qué tenant pertenece, es
+  // lo que esta consulta resuelve. La policy "own memberships" filtra
+  // por user_id en vez de tenant_id.
+  async listMyTenants(userId: string) {
+    return this.tenantContext.withUser(userId, async (client) => {
+      const { rows } = await client.query(
+        `select t.id, t.name, t.slug, m.role
+         from memberships m
+         join tenants t on t.id = m.tenant_id
+         where m.user_id = $1
+         order by m.created_at`,
+        [userId],
+      );
+      return rows;
+    });
+  }
+
   async listMembers(tenantId: string) {
     return this.tenantContext.withTenant(tenantId, async (client) => {
       const { rows } = await client.query(

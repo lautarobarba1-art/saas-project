@@ -215,6 +215,16 @@ create policy "scoped to current tenant"
   on memberships for all
   using (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
+-- Un usuario logueado necesita poder ver sus propias memberships
+-- across tenants (ej. "a qué clubes pertenezco") sin conocer de
+-- antemano ningún tenant_id — withUser() en vez de withTenant() setea
+-- app.user_id para este caso puntual. Solo SELECT y solo las propias:
+-- insert/update/delete siguen exigiendo el tenant_id correcto vía la
+-- policy de arriba.
+create policy "own memberships"
+  on memberships for select
+  using (user_id = current_setting('app.user_id', true)::uuid);
+
 create policy "scoped to current tenant"
   on availability_rules for all
   using (
