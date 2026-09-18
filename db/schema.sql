@@ -197,6 +197,16 @@ create policy "scoped to current tenant"
   on resources for all
   using (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
+-- Lectura pública de canchas activas, sin tenant context: la página
+-- pública de un club (resuelta por slug) necesita listar sus canchas
+-- sin que el visitante esté logueado. Postgres combina esta policy con
+-- la de arriba por OR (son permisivas): esto solo agrega SELECT sobre
+-- filas activas, insert/update/delete siguen exigiendo el tenant_id
+-- correcto vía la policy "scoped to current tenant".
+create policy "public read active"
+  on resources for select
+  using (active);
+
 create policy "scoped to current tenant"
   on bookings for all
   using (tenant_id = current_setting('app.tenant_id', true)::uuid);

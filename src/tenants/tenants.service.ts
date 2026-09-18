@@ -22,6 +22,8 @@ export class TenantsService {
   // es justo lo que este método resuelve. La policy "public read" de
   // tenants permite el select sin SET LOCAL — es la excepción legítima
   // que documenta CLAUDE.md, no un atajo para copiar en otro service.
+  // El select de resources se apoya en su propia policy pública
+  // ("public read active"), no en esta excepción — ver db/schema.sql.
   async findBySlug(slug: string) {
     const { rows } = await this.pool.query(
       'select id, name, slug from tenants where slug = $1',
@@ -31,7 +33,16 @@ export class TenantsService {
     if (!tenant) {
       throw new NotFoundException('Club no encontrado');
     }
-    return tenant;
+
+    const { rows: resources } = await this.pool.query(
+      `select id, name, type, sena_amount
+       from resources
+       where tenant_id = $1 and active
+       order by created_at`,
+      [tenant.id],
+    );
+
+    return { ...tenant, resources };
   }
 
   // El id se genera acá, no en la base (sin `default gen_random_uuid()`
