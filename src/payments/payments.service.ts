@@ -156,6 +156,13 @@ export class PaymentsService {
       });
     } catch (err) {
       if (err instanceof InvalidWebhookSignatureError) {
+        // reason es un enum público (MissingSignatureHeader,
+        // MalformedSignatureHeader, MissingTimestamp, MissingHash,
+        // SignatureMismatch, TimestampOutOfTolerance) — nunca revela el
+        // secret ni el hash, es seguro loguearlo.
+        this.logger.warn(
+          `Webhook rechazado: ${err.reason} (dataId=${dataId}, xRequestId=${xRequestId})`,
+        );
         throw new ForbiddenException('Firma inválida');
       }
       throw err;
