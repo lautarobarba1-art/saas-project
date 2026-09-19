@@ -83,4 +83,51 @@ export class WhatsAppService {
       );
     }
   }
+
+  // Texto libre, no un template: solo válido como respuesta dentro de
+  // la ventana de 24hs desde el último mensaje del cliente (política de
+  // Meta para mensajes iniciados por el negocio vs. respuestas). El bot
+  // solo la usa para responder a alguien que le acaba de escribir, nunca
+  // para iniciar una conversación — eso sigue yendo por template.
+  async sendFreeText(phone: string, text: string): Promise<void> {
+    const phoneNumberId = this.config.get<string>('WHATSAPP_PHONE_NUMBER_ID');
+    const token = this.config.get<string>('WHATSAPP_ACCESS_TOKEN');
+    if (!phoneNumberId || !token) {
+      this.logger.warn(
+        'WhatsApp no configurado (faltan WHATSAPP_PHONE_NUMBER_ID/WHATSAPP_ACCESS_TOKEN) — se omite la respuesta',
+      );
+      return;
+    }
+
+    const to = phone.replace(/[^0-9]/g, '');
+    if (!to) return;
+
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to,
+            type: 'text',
+            text: { body: text },
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        const body = await res.text();
+        this.logger.error(`No se pudo responder por WhatsApp: ${res.status} ${body}`);
+      }
+    } catch (err) {
+      this.logger.error(
+        `Error de red respondiendo por WhatsApp: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
 }

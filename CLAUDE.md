@@ -187,11 +187,23 @@ ni se deja que rompa el webhook si falla).
   Canchaya, es una migración de infraestructura en Meta, no un cambio
   de código.
 - Variables en Railway: `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`
-  (hoy es el token temporal de 24hs que da el panel de Meta para
-  pruebas — **antes de depender de esto en producción real hay que
-  reemplazarlo por uno permanente**, generado desde un System User en
-  Business Settings, o los envíos van a empezar a fallar solos cuando
-  expire), `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+  (**token permanente**, generado desde un usuario del sistema
+  `canchaya-api` en Business Settings de Meta con expiración "Nunca" —
+  el temporal de 24hs que se usó al principio ya expiró una vez en
+  producción, por eso se migró), `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+- El número de `WHATSAPP_PHONE_NUMBER_ID` hoy es el **número de prueba
+  gratuito** que da Meta (no un número real del negocio) — a
+  propósito, no un olvido. Un número de prueba solo puede mandarle
+  WhatsApp a destinatarios cargados a mano en una lista de permitidos
+  en el panel de Meta, nunca a un cliente real cualquiera. Migrar a un
+  número real de producción (Meta for Developers > Cancha ya > Casos
+  de uso > Conectar con los clientes a través de WhatsApp > Paso 2.
+  Configuración de producción) queda pendiente hasta que haya un
+  cliente real interesado — se evaluó usar el número personal del
+  dueño, pero registrar un número para la API de WhatsApp Business lo
+  desconecta de la app de WhatsApp normal en el celular, así que no se
+  hizo con el número de uso diario. Cuando haga falta, definir si se
+  dedica un número nuevo o se acepta ese trade-off con uno existente.
 - El teléfono se normaliza sacando todo lo que no sea dígito
   (`booking.client_phone.replace(/[^0-9]/g, '')`) y se manda tal cual a
   la API — no se intenta adivinar ni insertar el prefijo `54`/`9` de
@@ -199,10 +211,61 @@ ni se deja que rompa el webhook si falla).
   envío falla silenciosamente (queda logueado, no rompe nada), no hay
   reintento ni aviso al club todavía.
 
+## Bot de WhatsApp (consultas entrantes)
+`src/whatsapp-bot/` — a diferencia de `notifications/whatsapp.service.ts`
+(que solo manda, nunca recibe), este módulo atiende mensajes que los
+clientes le escriben al número de WhatsApp del negocio y responde
+preguntas de disponibilidad general, horarios y precio.
+
+- `POST /whatsapp/webhook` recibe los mensajes entrantes; `GET` en la
+  misma ruta es el handshake de verificación que hace Meta una sola
+  vez al registrar la URL en el panel. Público a propósito (lo llama
+  Meta, no un usuario), la defensa es la firma `X-Hub-Signature-256`
+  (HMAC-SHA256 con `WHATSAPP_APP_SECRET` sobre el body crudo del
+  request — por eso `main.ts` desactiva el body-parser default de Nest
+  y usa uno propio que guarda los bytes originales en `req.rawBody`
+  antes de parsear a JSON, si no esos bytes se pierden y no se puede
+  recalcular el HMAC).
+- **Identificación del club**: el número de WhatsApp es UNO SOLO,
+  compartido entre todos los tenants de Canchaya (y con Menesteres) —
+  no hay forma de saber de qué club se trata solo por el número. La
+  página pública de cada club (`/slug` en canchaya-web) tiene un link
+  "Consultanos por WhatsApp" que precarga el mensaje con
+  `(ref:<slug>)` al final — el bot lo lee de ahí, es un dato exacto,
+  no depende de que la persona escriba bien el nombre. Si alguien
+  escribe sin pasar por ese link, el bot intenta interpretar el
+  mensaje mismo como el slug del club; si no reconoce nada, pregunta
+  directamente en vez de adivinar. Una vez identificado, se guarda en
+  `ConversationStateService` (en memoria, por teléfono, 2hs de
+  inactividad — misma limitación de una sola instancia que
+  `RateLimitGuard`, documentada ahí).
+- **Cómo responde**: nunca inventa datos. Junta las canchas activas del
+  club + sus horarios semanales (`resources`/`availability_rules`, vía
+  `withTenant` como cualquier otro query) y se los pasa como contexto a
+  Claude (`claude-haiku-4-5-20251001`, vía `ANTHROPIC_API_KEY`) junto
+  con la pregunta — el modelo solo puede responder con esos datos, y si
+  la pregunta requiere disponibilidad exacta de un día puntual (con
+  reservas ya tomadas descontadas), lo dice y manda el link de reservas
+  (`WEB_APP_URL/slug`) en vez de intentar calcularlo — esa lógica ya
+  existe en `BookingsService.getAvailability` y no se duplicó acá.
+- Las respuestas son texto libre (`WhatsAppService.sendFreeText`), no
+  template — válido porque es una respuesta dentro de la ventana de
+  24hs desde que el cliente escribió primero, no un mensaje que inicia
+  el negocio (eso sigue yendo por template, ver la sección de
+  notificaciones arriba).
+- Variables nuevas en Railway: `WHATSAPP_APP_SECRET` (Meta for
+  Developers > la app > Configuración básica), `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+  (lo elegimos nosotros, se pega también en el panel de webhooks de
+  Meta), `ANTHROPIC_API_KEY`, `WEB_APP_URL`.
+- Pendiente de probar de punta a punta contra un mensaje real de
+  WhatsApp — construido y deployado, pero la primera prueba real
+  requiere completar la configuración del webhook en el panel de Meta
+  con la URL + verify token.
+
 ## Lo que falta (a propósito, no un olvido)
-- Confirmar que el template de WhatsApp fue aprobado por Meta (estaba
-  `PENDING` la última vez que se chequeó) y probar un envío real de
-  punta a punta.
+- Migrar `WHATSAPP_PHONE_NUMBER_ID` de número de prueba a uno real de
+  producción — ver la nota en la sección de WhatsApp arriba. Bloqueado
+  a propósito hasta que haya un cliente real, no técnicamente.
 - Frontend público (`canchaya-web`, repo aparte) ya cubre reservas y
   panel de administración — lo que falta ahí es propio de ese repo, no
   de esta API.

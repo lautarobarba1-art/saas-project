@@ -8,6 +8,7 @@ import { TenantsModule } from './tenants/tenants.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { AvailabilityRulesModule } from './availability-rules/availability-rules.module';
 import { PaymentsModule } from './payments/payments.module';
+import { WhatsappBotModule } from './whatsapp-bot/whatsapp-bot.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { PaymentsModule } from './payments/payments.module';
     BookingsModule,
     AvailabilityRulesModule,
     PaymentsModule,
+    WhatsappBotModule,
   ],
 })
 export class AppModule {}

@@ -1,11 +1,28 @@
 import 'reflect-metadata';
+import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // bodyParser: false + parser manual abajo: el webhook de WhatsApp
+  // (src/whatsapp-bot/) valida X-Hub-Signature-256 con un HMAC sobre
+  // los bytes crudos del body — si Nest ya lo parseó a JSON con su
+  // body-parser default, esos bytes originales se pierden y no hay
+  // forma de recalcular la firma. El `verify` de acá los guarda en
+  // `req.rawBody` antes de parsear, para cualquier ruta que los necesite.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bodyParser: false,
+  });
+  app.use(
+    express.json({
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
+  app.use(express.urlencoded({ extended: true }));
 
   // Railway antepone más de un hop en X-Forwarded-For (su propio
   // balanceador aparece ahí, y esa IP cambia entre requests) — con
