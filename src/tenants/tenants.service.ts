@@ -141,4 +141,33 @@ export class TenantsService {
       }
     });
   }
+
+  async removeMember(tenantId: string, userId: string) {
+    return this.tenantContext.withTenant(tenantId, async (client) => {
+      const { rows } = await client.query(
+        `select role from memberships where tenant_id = $1 and user_id = $2`,
+        [tenantId, userId],
+      );
+      const membership = rows[0];
+      if (!membership) {
+        throw new NotFoundException('Ese usuario no pertenece al club');
+      }
+
+      if (membership.role === 'owner') {
+        const { rows: owners } = await client.query(
+          `select count(*)::int as count from memberships
+           where tenant_id = $1 and role = 'owner'`,
+          [tenantId],
+        );
+        if (owners[0].count <= 1) {
+          throw new ConflictException('No se puede eliminar al único dueño del club');
+        }
+      }
+
+      await client.query(
+        `delete from memberships where tenant_id = $1 and user_id = $2`,
+        [tenantId, userId],
+      );
+    });
+  }
 }

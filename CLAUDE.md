@@ -65,12 +65,32 @@ Deployado en Railway (proyecto `carefree-heart`, servicio `saas-project`
   y alta de club (`POST /tenants`, autenticado, crea el tenant + la
   membership `owner` en una transacción).
 - `resources`: CRUD de canchas, autenticado, scopeado por tenant.
+  `PATCH /tenants/:tenantId/resources/:resourceId` permite editar
+  nombre/tipo/seña y activar/desactivar (`active`) sin borrar la
+  cancha — todos los campos son opcionales, se actualizan con
+  `coalesce` para no pisar lo que no vino en el body.
 - `availability-rules`: CRUD de horarios de apertura por cancha,
-  autenticado.
+  autenticado. `PATCH .../availability-rules/:id` es un reemplazo
+  completo de día/desde/hasta (no un merge parcial), mismo DTO que el
+  `POST`.
 - `bookings`: cálculo de disponibilidad, creación pública en
   `pending_payment` con hold de 10 min, cron que expira holds vencidos
   cada minuto (itera tenants y usa `withTenant` por cada uno — no hay
   rol con bypass de RLS para hacerlo en una sola query cross-tenant).
+  El lado admin (`GET`/`POST /tenants/:tenantId/bookings`,
+  `AdminBookingsController`) es aparte del público: hasta que se
+  agregó, el club no tenía NINGUNA forma de ver sus propias reservas
+  ni pagos salvo mirando la base a mano. `GET` trae un día a la vez
+  (`?date=YYYY-MM-DD`, más `resourceId`/`status` opcionales) con el
+  último estado de pago vía `LEFT JOIN LATERAL` a `payments` — corre
+  dentro del mismo `withTenant`, así que la RLS de `payments` lo
+  scopea igual que cualquier otro query, sin policy nueva. `POST` es
+  la carga manual del staff (teléfono/mostrador): mismas validaciones
+  mínimas que el flujo público (cancha activa, horario futuro), pero
+  entra directo como `confirmed` — sin pasar por Mercado Pago, sin
+  hold de 10 minutos — y dispara la misma confirmación de WhatsApp que
+  un pago aprobado (fire-and-forget, mismo criterio que en
+  `payments.service.ts`).
 - `payments`: integración con Mercado Pago usando la **Orders API**
   (`POST /v1/orders`, no la vieja `/checkout/preferences` — el panel de
   MP empuja a integraciones nuevas hacia esta). `POST .../payment-preference`
@@ -141,6 +161,11 @@ antes de esto no había NINGUNA forma de sumar un `staff` a un club, la
 única membership que existía era la del owner creada junto con el
 tenant. `resources`/`availability-rules` siguen abiertos a ambos roles
 a propósito — es el trabajo del día a día del staff.
+`DELETE /tenants/:tenantId/memberships/:userId` también es `owner`
+(mismo criterio que sumar) y bloquea sacar al último owner del club
+(`tenants.service.ts#removeMember` cuenta owners restantes antes de
+borrar, `ConflictException` si quedaría en cero) — un club nunca puede
+quedar sin nadie que pueda administrarlo.
 
 ## Notificaciones por WhatsApp
 `src/notifications/whatsapp.service.ts` — WhatsApp Cloud API de Meta
@@ -205,9 +230,10 @@ los tests de RLS pasan igual sin probar nada real). CI
 (`.github/workflows/ci.yml`) levanta un Postgres descartable por job y
 arma ambos roles desde cero en cada corrida, no depende de Railway.
 
-Cobertura actual (33 tests, 4 archivos):
+Cobertura actual (41 tests, 4 archivos):
 - `test/rls.spec.ts` — aislamiento multi-tenant y el EXCLUDE constraint
-  de bookings (contra Postgres real, ver arriba).
+  de bookings (contra Postgres real, ver arriba), incluye el join a
+  `payments` del panel de reservas admin.
 - `test/bookings-availability.spec.ts`, `test/payments-logic.spec.ts`
   — funciones puras sin DB (`subtractBusy`, `mapOrderStatus`,
   `encodeReference`/`decodeReference`, `formatWhenLabel` — exportadas
@@ -218,7 +244,9 @@ Cobertura actual (33 tests, 4 archivos):
   registrados explícitamente como provider (`MembershipGuard`,
   `RolesGuard`, `RateLimitGuard`) se resuelven exactamente igual que en
   producción. Cubre auth, `JwtAuthGuard`, `MembershipGuard`,
-  `RolesGuard`, y que el rate limit de `/auth/login` corte de verdad.
+  `RolesGuard` (incluyendo el panel admin: reservas, `PATCH` de
+  resources, `DELETE` de memberships y el resguardo del último owner),
+  y que el rate limit de `/auth/login` corte de verdad.
 
 Lo que todavía no tiene test: el webhook de Mercado Pago de punta a
 punta (createPreference/handleWebhook con la Orders API real — hoy

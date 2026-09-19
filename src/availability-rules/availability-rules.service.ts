@@ -46,6 +46,32 @@ export class AvailabilityRulesService {
     });
   }
 
+  async update(
+    tenantId: string,
+    resourceId: string,
+    ruleId: string,
+    dto: CreateAvailabilityRuleDto,
+  ) {
+    if (dto.endTime <= dto.startTime) {
+      throw new BadRequestException('endTime debe ser posterior a startTime');
+    }
+
+    return this.tenantContext.withTenant(tenantId, async (client) => {
+      await this.assertResourceInTenant(client, tenantId, resourceId);
+      const { rows } = await client.query(
+        `update availability_rules
+         set day_of_week = $3, start_time = $4, end_time = $5
+         where id = $1 and resource_id = $2
+         returning id, day_of_week, start_time, end_time`,
+        [ruleId, resourceId, dto.dayOfWeek, dto.startTime, dto.endTime],
+      );
+      if (rows.length === 0) {
+        throw new NotFoundException('Horario no encontrado');
+      }
+      return rows[0];
+    });
+  }
+
   async remove(tenantId: string, resourceId: string, ruleId: string) {
     return this.tenantContext.withTenant(tenantId, async (client) => {
       await this.assertResourceInTenant(client, tenantId, resourceId);

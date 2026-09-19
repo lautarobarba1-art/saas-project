@@ -91,6 +91,21 @@ export async function createBooking(
   return id;
 }
 
+export async function createPayment(
+  admin: Pool,
+  bookingId: string,
+  status: 'pending' | 'approved' | 'rejected',
+  amount: number,
+): Promise<string> {
+  const id = randomUUID();
+  await admin.query(
+    `insert into payments (id, booking_id, provider, provider_payment_id, amount, status)
+     values ($1, $2, 'mercadopago', $3, $4, $5)`,
+    [id, bookingId, `${FIXTURE_PREFIX}-${id.slice(0, 8)}`, amount, status],
+  );
+  return id;
+}
+
 // Cascada desde tenants (ON DELETE CASCADE en memberships/resources/
 // bookings/availability_rules) hace la mayor parte del trabajo — solo
 // hace falta borrar tenants y, aparte, los users de prueba (users no

@@ -7,6 +7,7 @@ import {
   cleanupFixtures,
   createBooking,
   createMembership,
+  createPayment,
   createResource,
   createTenant,
   createUser,
@@ -105,6 +106,42 @@ describe('Aislamiento multi-tenant (RLS)', () => {
     } finally {
       client.release();
     }
+  });
+
+  // Primera vez que el lado admin lee payments (vista de reservas del
+  // panel, ver bookings.service.ts#listForTenant) — valida que el join
+  // lateral a payments quede scopeado igual que bookings, sin agregar
+  // ninguna policy nueva: corre dentro del mismo withTenant, así que la
+  // policy existente de payments (que valida vía join a bookings.tenant_id)
+  // ya alcanza.
+  it('el join a payments del panel de reservas nunca cruza tenants', async () => {
+    const tenantA = await createTenant(admin, 'payments-join-a');
+    const tenantB = await createTenant(admin, 'payments-join-b');
+    const resourceA = await createResource(admin, tenantA, 'Cancha A');
+    const resourceB = await createResource(admin, tenantB, 'Cancha B');
+    const when = new Date(Date.now() + 86_400_000);
+    const bookingA = await createBooking(admin, tenantA, resourceA, when);
+    const bookingB = await createBooking(admin, tenantB, resourceB, when);
+    await createPayment(admin, bookingA, 'approved', 1000);
+    await createPayment(admin, bookingB, 'approved', 2000);
+
+    const rowsFromA = await ctx.withTenant(tenantA, (client) =>
+      client
+        .query(
+          `select b.id, p.amount as payment_amount
+           from bookings b
+           left join lateral (
+             select amount from payments
+             where booking_id = b.id order by created_at desc limit 1
+           ) p on true
+           where b.tenant_id = $1`,
+          [tenantA],
+        )
+        .then((r) => r.rows),
+    );
+    expect(rowsFromA).toHaveLength(1);
+    expect(rowsFromA[0].id).toBe(bookingA);
+    expect(rowsFromA[0].payment_amount).toBe(1000);
   });
 
   it('withUser(A) solo ve las membresías de A, nunca las de B', async () => {

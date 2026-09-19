@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { MembershipGuard } from '../common/membership.guard';
 import { Roles } from '../common/roles.decorator';
@@ -30,5 +38,17 @@ export class MembershipsController {
     @Body() dto: AddMembershipDto,
   ) {
     return this.tenants.addMember(tenantId, dto);
+  }
+
+  // Solo el owner saca gente del equipo — mismo criterio que sumar.
+  // tenants.service.ts#removeMember además bloquea sacar al último
+  // owner, para que un club nunca quede sin nadie que pueda administrarlo.
+  @Roles('owner')
+  @Delete(':userId')
+  remove(
+    @Param('tenantId') tenantId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.tenants.removeMember(tenantId, userId);
   }
 }
