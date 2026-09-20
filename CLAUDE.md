@@ -257,15 +257,32 @@ preguntas de disponibilidad general, horarios y precio.
   Developers > la app > Configuración básica), `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
   (lo elegimos nosotros, se pega también en el panel de webhooks de
   Meta), `ANTHROPIC_API_KEY`, `WEB_APP_URL`.
-- Pendiente de probar de punta a punta contra un mensaje real de
-  WhatsApp — construido y deployado, pero la primera prueba real
-  requiere completar la configuración del webhook en el panel de Meta
-  con la URL + verify token.
+- **Probado de punta a punta con el webhook de prueba manual de Meta**
+  (el botón "Prueba" de la tabla de campos del webhook, en Paso 2 >
+  Configurar Webhooks): firma verificada, mensaje parseado, club no
+  identificado (esperado, era un payload de ejemplo) → responde
+  pidiendo el club. Todo el código funciona.
+
+  **Lo que todavía no se pudo probar: un mensaje real de WhatsApp**,
+  ni siquiera desde el propio número del dueño ya agregado a la lista
+  de destinatarios de prueba, ni iniciando la conversación primero
+  desde el número de prueba. Mientras la app de Meta esté **"Sin
+  publicar"**, el panel deja bien claro que solo entrega webhooks de
+  prueba simulados — los mensajes reales, aunque sean de un número
+  autorizado, no se entregan al webhook hasta publicar la app. Esto
+  queda atado a la misma migración pendiente de número de producción
+  (ver "Lo que falta" abajo) — publicar/verificar la app ante Meta
+  probablemente destrabe ambas cosas a la vez, no tiene sentido
+  resolverlo por separado.
 
 ## Lo que falta (a propósito, no un olvido)
 - Migrar `WHATSAPP_PHONE_NUMBER_ID` de número de prueba a uno real de
-  producción — ver la nota en la sección de WhatsApp arriba. Bloqueado
-  a propósito hasta que haya un cliente real, no técnicamente.
+  producción, y publicar/verificar la app ante Meta — ver la nota en
+  la sección de WhatsApp arriba. Ambas cosas bloqueadas a propósito
+  hasta que haya un cliente real, no técnicamente. La app publicada
+  también es lo que falta para que el bot de consultas entrantes
+  reciba mensajes reales (hoy solo recibe los de prueba simulados
+  desde el panel de Meta).
 - Frontend público (`canchaya-web`, repo aparte) ya cubre reservas y
   panel de administración — lo que falta ahí es propio de ese repo, no
   de esta API.
