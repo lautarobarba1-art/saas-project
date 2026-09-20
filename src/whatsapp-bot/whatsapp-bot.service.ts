@@ -36,6 +36,8 @@ export class WhatsappBotService {
     parsedBody: any,
   ): Promise<void> {
     try {
+      this.logger.log('Webhook de WhatsApp recibido');
+
       if (!this.verifySignature(rawBody, signature)) {
         this.logger.warn('Webhook de WhatsApp con firma inválida — ignorado');
         return;
@@ -44,7 +46,14 @@ export class WhatsappBotService {
       const messages: InboundMessage[] =
         parsedBody?.entry?.[0]?.changes?.[0]?.value?.messages ?? [];
 
+      if (messages.length === 0) {
+        this.logger.log(
+          'Webhook sin mensajes de texto (probablemente un status update) — ignorado',
+        );
+      }
+
       for (const message of messages) {
+        this.logger.log(`Mensaje entrante de ${message.from}: "${message.text?.body}"`);
         if (message.type !== 'text' || !message.text?.body) continue;
         await this.handleTextMessage(message.from, message.text.body);
       }
@@ -73,6 +82,7 @@ export class WhatsappBotService {
   private async handleTextMessage(phone: string, text: string): Promise<void> {
     const tenant = await this.resolveTenant(phone, text);
     if (!tenant) {
+      this.logger.log(`No se pudo identificar el club para ${phone} — se pregunta`);
       await this.whatsapp.sendFreeText(
         phone,
         'Hola! Para ayudarte necesito saber de qué club se trata — ' +
@@ -82,7 +92,9 @@ export class WhatsappBotService {
       return;
     }
 
+    this.logger.log(`Club identificado para ${phone}: ${tenant.name} (${tenant.slug})`);
     const reply = await this.answerQuestion(tenant, text);
+    this.logger.log(`Respuesta generada para ${phone}: "${reply}"`);
     await this.whatsapp.sendFreeText(phone, reply);
   }
 
