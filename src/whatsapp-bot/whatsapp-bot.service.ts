@@ -124,6 +124,15 @@ export class WhatsappBotService {
     await this.whatsapp.sendFreeText(phone, reply);
   }
 
+  // Usado por el demo interactivo de la landing pública — misma lógica
+  // exacta que usa el bot real por WhatsApp (answerQuestion), solo que
+  // acá el club se identifica por slug en vez de por conversación de
+  // WhatsApp. NotFoundException de findBySlug se propaga tal cual (404).
+  async answerForDemo(slug: string, question: string): Promise<string> {
+    const tenant = await this.tenants.findBySlug(slug);
+    return this.answerQuestion(tenant, question);
+  }
+
   // Resuelve a qué club pertenece la conversación. Primero mira si ya
   // lo sabe (mismo teléfono, charla en curso). Si no, busca una
   // referencia al club en el mensaje — el link "Consultanos por
