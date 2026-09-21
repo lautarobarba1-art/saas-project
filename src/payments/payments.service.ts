@@ -220,6 +220,78 @@ export class PaymentsService {
     const payment = order.transactions?.payments?.[0];
     const amount = Number(payment?.amount ?? order.total_paid_amount ?? 0);
 
+    await this.confirmPayment(
+      tenantId,
+      bookingId,
+      providerPaymentId,
+      amount,
+      status,
+      order,
+      `Order ${dataId}`,
+    );
+  }
+
+  // Segunda vía para enterarse de un pago aprobado, aparte del webhook:
+  // lo llama HoldExpiryService justo antes de liberar un hold vencido,
+  // para no confiar ciegamente en que el webhook haya llegado. Si nunca
+  // llegó (secret desactualizado, caída puntual, lo que sea), esto evita
+  // liberar un horario que en realidad sí se pagó — la alternativa es
+  // tener que devolver plata a mano después. Busca por external_reference
+  // en la API de pagos de Mercado Pago (no la de orders — ver nota en
+  // createPreference sobre por qué se usa un endpoint distinto acá).
+  async reconcilePendingBooking(
+    tenantId: string,
+    bookingId: string,
+  ): Promise<boolean> {
+    const reference = encodeReference(tenantId, bookingId);
+    const res = await fetch(
+      `https://api.mercadopago.com/v1/payments/search?external_reference=${reference}`,
+      { headers: { Authorization: `Bearer ${this.accessToken}` } },
+    );
+    if (!res.ok) {
+      this.logger.error(
+        `No se pudo reconciliar booking ${bookingId} contra Mercado Pago: ${res.status}`,
+      );
+      return false;
+    }
+
+    const data = await res.json();
+    const approved = (data.results ?? []).find(
+      (p: any) => p.status === 'approved',
+    );
+    if (!approved) {
+      return false;
+    }
+
+    this.logger.warn(
+      `Pago aprobado (${approved.id}) encontrado por reconciliación para booking ${bookingId} ` +
+        `— el webhook nunca lo confirmó a tiempo.`,
+    );
+    await this.confirmPayment(
+      tenantId,
+      bookingId,
+      String(approved.id),
+      Number(approved.transaction_amount ?? 0),
+      'approved',
+      approved,
+      `Reconciliación ${approved.id}`,
+    );
+    return true;
+  }
+
+  // Compartido por handleWebhook y reconcilePendingBooking: registra el
+  // pago (idempotente vía el índice único de provider_payment_id, así
+  // que no importa si el webhook y la reconciliación procesan el mismo
+  // pago por separado) y confirma la reserva si corresponde.
+  private async confirmPayment(
+    tenantId: string,
+    bookingId: string,
+    providerPaymentId: string,
+    amount: number,
+    status: 'pending' | 'approved' | 'rejected',
+    rawPayload: unknown,
+    logLabel: string,
+  ): Promise<void> {
     await this.tenantContext.withTenant(tenantId, async (client) => {
       const { rows } = await client.query(
         `select b.id, b.status, b.client_name, b.client_phone, b.start_at,
@@ -232,7 +304,7 @@ export class PaymentsService {
       );
       const booking = rows[0];
       if (!booking) {
-        this.logger.warn(`Order ${dataId} referencia una reserva inexistente`);
+        this.logger.warn(`${logLabel} referencia una reserva inexistente`);
         return;
       }
 
@@ -245,12 +317,13 @@ export class PaymentsService {
             providerPaymentId,
             Math.round(amount),
             status,
-            JSON.stringify(order),
+            JSON.stringify(rawPayload),
           ],
         );
       } catch (err: any) {
-        // 23505 = unique_violation en provider_payment_id: MP ya nos
-        // mandó esta notificación antes (reintento). Idempotente, no
+        // 23505 = unique_violation en provider_payment_id: ya se
+        // procesó este pago antes (reintento del webhook, o el webhook
+        // y la reconciliación llegaron al mismo pago). Idempotente, no
         // hay nada más que hacer.
         if (err.code === '23505') {
           return;
@@ -263,9 +336,10 @@ export class PaymentsService {
         (booking.status === 'pending_payment' || booking.status === 'expired')
       ) {
         // El caso normal es confirmar un pending_payment. El caso
-        // "expired" es un pago aprobado que llegó después de que el
-        // cron ya liberó el hold — no debería pasar en uso normal (MP
-        // notifica en segundos), pero si pasa, el horario pudo haber
+        // "expired" es un pago aprobado que se confirma después de que
+        // el cron ya liberó el hold — no debería pasar en uso normal
+        // (MP notifica en segundos, y ahora además hay reconciliación
+        // antes de expirar), pero si pasa, el horario pudo haber
         // quedado libre para que otra persona lo reserve mientras
         // tanto. Intentar confirmar de todas formas: si nadie más lo
         // tomó, el EXCLUDE constraint deja pasar el update tranquilo.
@@ -279,9 +353,9 @@ export class PaymentsService {
             [bookingId],
           );
           // Fire-and-forget a propósito: si WhatsApp falla o tarda, no
-          // tiene que demorar ni tirar abajo la confirmación del
-          // webhook — el pago y la reserva ya quedaron bien, la
-          // notificación es un plus, no la fuente de verdad.
+          // tiene que demorar ni tirar abajo la confirmación — el pago
+          // y la reserva ya quedaron bien, la notificación es un plus,
+          // no la fuente de verdad.
           void this.whatsapp.sendBookingConfirmation({
             phone: booking.client_phone,
             clientName: booking.client_name,
