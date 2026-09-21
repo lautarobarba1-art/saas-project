@@ -13,6 +13,12 @@ create table tenants (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   slug text not null unique,
+  -- El club de ejemplo público (slug 'demo') usa este flag para que
+  -- PaymentsService#createPreference nunca llegue a crear una order
+  -- real de Mercado Pago — alguien probando el flujo de reserva desde
+  -- la landing no tiene por qué terminar pagando con su tarjeta real.
+  -- Ver la nota completa en payments.service.ts.
+  demo_mode boolean not null default false,
   created_at timestamptz not null default now()
 );
 

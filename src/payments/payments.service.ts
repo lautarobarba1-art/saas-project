@@ -93,12 +93,23 @@ export class PaymentsService {
   // la order — sin el tenantId codificado ahí no hay forma de abrir
   // withTenant() antes de tocar bookings/payments (que tienen RLS por
   // tenant), y no queremos resolver eso con un rol que bypasee RLS.
-  async createPreference(tenantId: string, bookingId: string) {
+  //
+  // Devuelve { demo: true } en vez de un checkoutUrl para el club de
+  // demostración (tenants.demo_mode): la landing pública manda gente a
+  // probar el flujo de reserva del club de ejemplo, y nadie que esté
+  // solo probando tiene que terminar pagando de verdad con su tarjeta
+  // real — acá se confirma la reserva directo, sin tocar Mercado Pago.
+  async createPreference(
+    tenantId: string,
+    bookingId: string,
+  ): Promise<{ checkoutUrl?: string; demo?: boolean }> {
     return this.tenantContext.withTenant(tenantId, async (client) => {
       const { rows } = await client.query(
-        `select b.id, b.status, r.name as resource_name, r.sena_amount
+        `select b.id, b.status, r.name as resource_name, r.sena_amount,
+                t.demo_mode
          from bookings b
          join resources r on r.id = b.resource_id
+         join tenants t on t.id = b.tenant_id
          where b.id = $1 and b.tenant_id = $2`,
         [bookingId, tenantId],
       );
@@ -108,6 +119,14 @@ export class PaymentsService {
       }
       if (booking.status !== 'pending_payment') {
         throw new BadRequestException('Esta reserva no está esperando pago');
+      }
+
+      if (booking.demo_mode) {
+        await client.query(
+          `update bookings set status = 'confirmed' where id = $1`,
+          [bookingId],
+        );
+        return { demo: true };
       }
 
       const amount = Number(booking.sena_amount).toFixed(2);
