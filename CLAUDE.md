@@ -310,14 +310,15 @@ los tests de RLS pasan igual sin probar nada real). CI
 (`.github/workflows/ci.yml`) levanta un Postgres descartable por job y
 arma ambos roles desde cero en cada corrida, no depende de Railway.
 
-Cobertura actual (41 tests, 4 archivos):
+Cobertura actual (49 tests, 5 archivos):
 - `test/rls.spec.ts` — aislamiento multi-tenant y el EXCLUDE constraint
   de bookings (contra Postgres real, ver arriba), incluye el join a
   `payments` del panel de reservas admin.
-- `test/bookings-availability.spec.ts`, `test/payments-logic.spec.ts`
-  — funciones puras sin DB (`subtractBusy`, `mapOrderStatus`,
-  `encodeReference`/`decodeReference`, `formatWhenLabel` — exportadas
-  desde sus services solo para poder testearlas sueltas).
+- `test/bookings-availability.spec.ts`, `test/payments-logic.spec.ts`,
+  `test/whatsapp-bot-logic.spec.ts` — funciones puras sin DB
+  (`subtractBusy`, `mapOrderStatus`, `encodeReference`/`decodeReference`,
+  `formatWhenLabel`, `verifyWebhookSignature`, `extractSlugCandidates`
+  — exportadas desde sus services solo para poder testearlas sueltas).
 - `test/http.e2e.spec.ts` — capa HTTP completa vía
   `Test.createTestingModule({imports: [AppModule]})` + `supertest`,
   el `AppModule` real (no uno recortado), así que guards no
@@ -331,8 +332,10 @@ Cobertura actual (41 tests, 4 archivos):
 Lo que todavía no tiene test: el webhook de Mercado Pago de punta a
 punta (createPreference/handleWebhook con la Orders API real — hoy
 solo están testeadas las funciones puras que usan), disponibilidad de
-`availability-rules` vía HTTP, y WhatsApp (no tiene ningún test, ni
-siquiera del payload que arma).
+`availability-rules` vía HTTP, y el bot de WhatsApp más allá de sus
+funciones puras (`verifyWebhookSignature`/`extractSlugCandidates`) —
+`resolveTenant` contra la base real, `getClubContext`, y la
+integración con Claude (`answerQuestion`) no tienen test todavía.
 
 ## Convenciones
 - TypeScript estricto, sin `any` sin justificar.

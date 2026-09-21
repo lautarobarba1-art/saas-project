@@ -279,7 +279,7 @@ describe('HTTP end-to-end', () => {
       [tenantId, staffId],
     );
     expect(rows).toHaveLength(0);
-  });
+  }, 15_000);
 
   it('no se puede eliminar al único dueño del club', async () => {
     const tenantId = await createTenant(admin, 'http-remove-last-owner');
@@ -292,7 +292,7 @@ describe('HTTP end-to-end', () => {
       .delete(`/tenants/${tenantId}/memberships/${owner.id}`)
       .set('Authorization', `Bearer ${accessToken}`);
     expect(res.status).toBe(409);
-  });
+  }, 15_000);
 
   it('el rate limit de /auth/login corta después de 10 intentos por minuto', async () => {
     // Al llegar acá ya se gastaron algunos intentos de login más

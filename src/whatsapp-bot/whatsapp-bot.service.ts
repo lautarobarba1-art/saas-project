@@ -15,6 +15,46 @@ interface InboundMessage {
   text?: { body: string };
 }
 
+// Lógica pura, exportada para poder testearla sin levantar el módulo
+// completo (sin DB, sin Meta, sin Anthropic) — mismo criterio que
+// mapOrderStatus/encodeReference en payments.service.ts.
+export function verifyWebhookSignature(
+  rawBody: Buffer | undefined,
+  signature: string | undefined,
+  secret: string | undefined,
+): boolean {
+  if (!secret || !signature || !rawBody) return false;
+
+  const expected =
+    'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex');
+  const received = Buffer.from(signature);
+  const calculated = Buffer.from(expected);
+  if (received.length !== calculated.length) return false;
+  return timingSafeEqual(received, calculated);
+}
+
+// Candidatos de slug de club a partir de un mensaje entrante: primero
+// el tag "(ref:<slug>)" que precarga el link "Consultanos por
+// WhatsApp" (dato exacto), y como respaldo el mensaje completo
+// slugificado (para alguien que escribe el nombre del club directo,
+// ej. "demo"). Devueltos en orden de prioridad — el llamador prueba
+// cada uno contra la base hasta encontrar un club real.
+export function extractSlugCandidates(text: string): string[] {
+  const candidates: string[] = [];
+
+  const refMatch = text.match(/ref:([a-z0-9-]+)/i);
+  if (refMatch) candidates.push(refMatch[1].toLowerCase());
+
+  const guessSlug = text
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (guessSlug && !candidates.includes(guessSlug)) candidates.push(guessSlug);
+
+  return candidates;
+}
+
 @Injectable()
 export class WhatsappBotService {
   private readonly logger = new Logger(WhatsappBotService.name);
@@ -38,7 +78,8 @@ export class WhatsappBotService {
     try {
       this.logger.log('Webhook de WhatsApp recibido');
 
-      if (!this.verifySignature(rawBody, signature)) {
+      const secret = this.config.get<string>('WHATSAPP_APP_SECRET');
+      if (!verifyWebhookSignature(rawBody, signature, secret)) {
         this.logger.warn('Webhook de WhatsApp con firma inválida — ignorado');
         return;
       }
@@ -62,21 +103,6 @@ export class WhatsappBotService {
         `Error procesando webhook de WhatsApp: ${err instanceof Error ? err.message : err}`,
       );
     }
-  }
-
-  private verifySignature(
-    rawBody: Buffer | undefined,
-    signature: string | undefined,
-  ): boolean {
-    const secret = this.config.get<string>('WHATSAPP_APP_SECRET');
-    if (!secret || !signature || !rawBody) return false;
-
-    const expected =
-      'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex');
-    const received = Buffer.from(signature);
-    const calculated = Buffer.from(expected);
-    if (received.length !== calculated.length) return false;
-    return timingSafeEqual(received, calculated);
   }
 
   private async handleTextMessage(phone: string, text: string): Promise<void> {
@@ -120,17 +146,7 @@ export class WhatsappBotService {
       };
     }
 
-    const refMatch = text.match(/ref:([a-z0-9-]+)/i);
-    const candidates = [refMatch?.[1]];
-    const guessSlug = text
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    if (guessSlug) candidates.push(guessSlug);
-
-    for (const slug of candidates) {
-      if (!slug) continue;
+    for (const slug of extractSlugCandidates(text)) {
       try {
         const tenant = await this.tenants.findBySlug(slug);
         this.conversations.set(phone, tenant);
