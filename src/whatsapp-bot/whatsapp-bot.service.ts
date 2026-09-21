@@ -221,7 +221,10 @@ export class WhatsappBotService {
       'preguntan algo que no podés responder con estos datos (por ejemplo, ' +
       'disponibilidad exacta de un día puntual con reservas ya tomadas), decilo ' +
       'y mandá el link de reservas para que lo vean en vivo. Respuestas cortas, ' +
-      'en español rioplatense, estilo WhatsApp — sin markdown.\n\n' +
+      'en español rioplatense. Nunca uses Markdown (nada de **negrita**, ' +
+      '# títulos, ni listas con guiones) — es texto plano de WhatsApp, y si ' +
+      'querés destacar algo usá *un solo asterisco* a cada lado, que es como ' +
+      'WhatsApp interpreta la negrita de verdad.\n\n' +
       `Canchas de ${tenant.name}:\n${JSON.stringify(courts)}\n\n` +
       (bookingUrl ? `Link de reservas: ${bookingUrl}` : '');
 
