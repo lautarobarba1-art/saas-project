@@ -131,6 +131,20 @@ Deployado en Railway (proyecto `carefree-heart`, servicio `saas-project`
   lo tomó, el `EXCLUDE` constraint lo bloquea (23P01) y queda logueado
   como error para revisión manual — plata cobrada por un horario que
   ahora es de otra reserva no es algo para resolver solo en el código.
+
+  **Reconciliación como red de seguridad si el webhook nunca llega**:
+  `HoldExpiryService` (`src/bookings/hold-expiry.service.ts`), antes de
+  expirar cada booking vencido, llama a
+  `PaymentsService#reconcilePendingBooking`, que busca directamente en
+  `GET /v1/payments/search?external_reference=...` (la API de pagos,
+  no la de orders — la de orders no tiene un `/search` real, devuelve
+  400) si en realidad sí se pagó. Si encuentra un pago `approved` que
+  el webhook nunca confirmó, lo procesa por el mismo camino
+  (`PaymentsService#confirmPayment`, compartido con `handleWebhook`,
+  idempotente por el índice único de `provider_payment_id`) en vez de
+  liberar el horario. Sin esto, un webhook fallido (ej. el secret
+  desactualizado que ya pasó una vez esta sesión) significaba plata
+  cobrada y horario perdido, con devolución manual como única salida.
 - Rate limiting propio (sin `@nestjs/throttler`, que todavía no declara
   soporte de peer-dependency para Nest 12) en `/auth/login` (10/min),
   `/auth/register` (5/min) y el endpoint público de reservas
