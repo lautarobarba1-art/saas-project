@@ -294,6 +294,67 @@ describe('HTTP end-to-end', () => {
     expect(res.status).toBe(409);
   }, 15_000);
 
+  it('MembershipGuard: GET .../availability-rules rechaza a quien no pertenece al tenant', async () => {
+    const tenantId = await createTenant(admin, 'http-rules-no');
+    const {
+      rows: [resource],
+    } = await admin.query(
+      `insert into resources (tenant_id, name, type, sena_amount)
+       values ($1, 'Cancha rules', 'futbol5', 1000) returning id`,
+      [tenantId],
+    );
+    const res = await request(app.getHttpServer())
+      .get(`/tenants/${tenantId}/resources/${resource.id}/availability-rules`)
+      .set('Authorization', `Bearer ${accessToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('un miembro real puede crear, editar y borrar un horario de disponibilidad', async () => {
+    const tenantId = await createTenant(admin, 'http-rules-ok');
+    const {
+      rows: [user],
+    } = await admin.query('select id from users where email = $1', [email]);
+    await createMembership(admin, tenantId, user.id, 'staff');
+    const {
+      rows: [resource],
+    } = await admin.query(
+      `insert into resources (tenant_id, name, type, sena_amount)
+       values ($1, 'Cancha rules ok', 'futbol5', 1000) returning id`,
+      [tenantId],
+    );
+
+    const base = `/tenants/${tenantId}/resources/${resource.id}/availability-rules`;
+    const auth = { Authorization: `Bearer ${accessToken}` };
+
+    const createRes = await request(app.getHttpServer())
+      .post(base)
+      .set(auth)
+      .send({ dayOfWeek: 1, startTime: '09:00', endTime: '18:00' });
+    expect(createRes.status).toBe(201);
+    const ruleId = createRes.body.id;
+
+    const listRes = await request(app.getHttpServer()).get(base).set(auth);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body).toHaveLength(1);
+    expect(listRes.body[0].start_time).toBe('09:00:00');
+
+    const updateRes = await request(app.getHttpServer())
+      .patch(`${base}/${ruleId}`)
+      .set(auth)
+      .send({ dayOfWeek: 2, startTime: '10:00', endTime: '20:00' });
+    expect(updateRes.status).toBe(200);
+    expect(updateRes.body.day_of_week).toBe(2);
+    expect(updateRes.body.start_time).toBe('10:00:00');
+
+    const deleteRes = await request(app.getHttpServer())
+      .delete(`${base}/${ruleId}`)
+      .set(auth);
+    expect(deleteRes.status).toBe(200);
+
+    const finalListRes = await request(app.getHttpServer()).get(base).set(auth);
+    expect(finalListRes.body).toHaveLength(0);
+  }, 15_000);
+
   it('el rate limit de /auth/login corta después de 10 intentos por minuto', async () => {
     // Al llegar acá ya se gastaron algunos intentos de login más
     // arriba en el mismo archivo (el guard es un contador en memoria

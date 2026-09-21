@@ -310,7 +310,7 @@ los tests de RLS pasan igual sin probar nada real). CI
 (`.github/workflows/ci.yml`) levanta un Postgres descartable por job y
 arma ambos roles desde cero en cada corrida, no depende de Railway.
 
-Cobertura actual (49 tests, 5 archivos):
+Cobertura actual (51 tests, 5 archivos):
 - `test/rls.spec.ts` — aislamiento multi-tenant y el EXCLUDE constraint
   de bookings (contra Postgres real, ver arriba), incluye el join a
   `payments` del panel de reservas admin.
@@ -327,15 +327,16 @@ Cobertura actual (49 tests, 5 archivos):
   producción. Cubre auth, `JwtAuthGuard`, `MembershipGuard`,
   `RolesGuard` (incluyendo el panel admin: reservas, `PATCH` de
   resources, `DELETE` de memberships y el resguardo del último owner),
-  y que el rate limit de `/auth/login` corte de verdad.
+  el CRUD completo de `availability-rules`, y que el rate limit de
+  `/auth/login` corte de verdad.
 
 Lo que todavía no tiene test: el webhook de Mercado Pago de punta a
 punta (createPreference/handleWebhook con la Orders API real — hoy
-solo están testeadas las funciones puras que usan), disponibilidad de
-`availability-rules` vía HTTP, y el bot de WhatsApp más allá de sus
-funciones puras (`verifyWebhookSignature`/`extractSlugCandidates`) —
-`resolveTenant` contra la base real, `getClubContext`, y la
-integración con Claude (`answerQuestion`) no tienen test todavía.
+solo están testeadas las funciones puras que usan), y el bot de
+WhatsApp más allá de sus funciones puras
+(`verifyWebhookSignature`/`extractSlugCandidates`) — `resolveTenant`
+contra la base real, `getClubContext`, y la integración con Claude
+(`answerQuestion`) no tienen test todavía.
 
 ## Convenciones
 - TypeScript estricto, sin `any` sin justificar.
